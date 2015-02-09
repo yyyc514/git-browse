@@ -1,5 +1,6 @@
 import sys
 import curses
+import signal
 from curses.textpad import Textbox
 from curses import ascii
 
@@ -71,6 +72,16 @@ class ModalScrollingInterface(object):
     def __init__(self):
         self.scroll_line = 0
         self._highlight_line = 0
+        signal.signal(signal.SIGWINCH, self.sigwinch_handler)
+
+    def sigwinch_handler(self, signum, frame):
+        self.window_resized()
+
+    def window_resized(self):
+        self._teardown_curses()
+        self._setup_curses()
+        self._draw()
+        curses.doupdate()
 
     @property
     def highlight_line(self):
@@ -92,7 +103,7 @@ class ModalScrollingInterface(object):
         self._highlight_line = value
 
         # Ensure highlighted line is visible
-        if value > self.scroll_line + curses.LINES - 3:
+        if value > self.scroll_line + self.console_height() - 3:
             max_scroll_line = self._max_scroll_line()
             self.scroll_line = min(self.scroll_line + delta, max_scroll_line)
         elif self.highlight_line < self.scroll_line:
@@ -169,17 +180,21 @@ class ModalScrollingInterface(object):
         self.INV_GREEN = curses.color_pair(4)
         self.INV_YELLOW = curses.color_pair(5)
 
-        w = curses.COLS
-        h = curses.LINES
+        w = curses.tigetnum("cols")
+        h = curses.tigetnum("lines")
 
         self.content_win = self.screen.subwin(h-1, w, 0, 0)
         self.status_win  = self.screen.subwin(1, w,   h-2, 0)
         self.mode_win    = self.screen.subwin(1, 2,   h-1, 0)
         self.command_win = self.screen.subwin(1, w-1, h-1, 1)
-
-        self.command_input = ModalTextbox(self.command_win, delegate=self)
-        for trigger, name in self.get_modes().items():
-            self.command_input.add_mode(name, trigger)
+        if hasattr(self,'command_input'):
+            self.command_input.win.keypad(0)
+            self.command_input.win = self.command_win
+            self.command_win.keypad(1)
+        else:
+            self.command_input = ModalTextbox(self.command_win, delegate=self)
+            for trigger, name in self.get_modes().items():
+                self.command_input.add_mode(name, trigger)
 
     def _teardown_curses(self):
         curses.nocbreak()
@@ -190,7 +205,8 @@ class ModalScrollingInterface(object):
     def _draw(self):
         self.content_win.clear()
         start = self.scroll_line
-        stop = self.scroll_line + curses.LINES - 2
+        # stop = self.scroll_line + self.console_height() - 2
+        stop = self.scroll_line + self.content_win.getmaxyx()[0] - 1
         for row, line in enumerate(self.content()[start:stop]):
             highlight = (row + start == self.highlight_line)
             self.draw_content_line(line, row, self.content_win, highlight)
@@ -209,6 +225,9 @@ class ModalScrollingInterface(object):
         self.mode_win.noutrefresh()
         self.command_win.noutrefresh()
         curses.doupdate()
+
+    def console_height(self):
+        return curses.tigetnum("lines")
 
     def content(self):
         """
@@ -289,12 +308,12 @@ class ModalScrollingInterface(object):
 
     @key_bindings('d')
     def half_page_down(self, times=1):
-        half_page = (curses.LINES - 2) / 2
+        half_page = (self.console_height() - 2) / 2
         self.down(half_page * times)
 
     @key_bindings('f', ' ', 'z', curses.KEY_NPAGE)
     def page_down(self, times=1):
-        page = curses.LINES - 2
+        page = self.console_height() - 2
         self.down(page * times)
 
     @key_bindings('k', 'y', curses.KEY_UP)
@@ -307,12 +326,12 @@ class ModalScrollingInterface(object):
 
     @key_bindings('u')
     def half_page_up(self, times=1):
-        half_page = (curses.LINES - 2) / 2
+        half_page = (self.console_height() - 2) / 2
         self.up(half_page * times)
 
     @key_bindings('b', 'w', curses.KEY_PPAGE)
     def page_up(self, times=1):
-        page = curses.LINES - 2
+        page = self.console_height() - 2
         self.up(page * times)
 
     @key_bindings('g', '<', curses.KEY_HOME)
@@ -326,7 +345,7 @@ class ModalScrollingInterface(object):
         self.highlight_line = self.content_length() - 1
 
     def _max_scroll_line(self):
-        return self.content_length() - curses.LINES + 2
+        return self.content_length() - self.console_height() + 2
 
 
 class ModalTextbox(Textbox, object):
@@ -431,6 +450,9 @@ class ModalTextbox(Textbox, object):
             return key
 
     def _process_key(self, key):
+        if key == -1: # terminal resize
+            self.clear()
+            return None
         if self.mode == self.DEFAULT_MODE:
             if ord('0') <= key <= ord('9') or key in self.EDIT_KEYS:
                 return self._transform_input_key(key)
