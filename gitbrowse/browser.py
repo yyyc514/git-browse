@@ -73,11 +73,15 @@ class GitBrowser(ModalScrollingInterface):
             'message': self.file_history.current_commit.message,
         }
 
-    def _move_commit(self, method_name):
+    def _move_commit(self, method_name, sha = None):
         start = self.file_history.current_commit.sha
 
         method = getattr(self.file_history, method_name)
-        if not method():
+        if sha != None:
+            result = method(sha)
+        else:
+            result = method()
+        if not result:
             curses.beep()
             return
 
@@ -92,6 +96,11 @@ class GitBrowser(ModalScrollingInterface):
             # sense to set it to the same value here to make sure that it's
             # not out of range for the newly loaded revision of the file.
             self.highlight_line = self.highlight_line
+
+    @ModalScrollingInterface.key_bindings('t')
+    def jump_to_commit(self, times=0):
+        wants_sha = self.content()[self.highlight_line].sha
+        self._move_commit('jump', wants_sha)
 
     @ModalScrollingInterface.key_bindings(']')
     def next_commit(self, times=1):

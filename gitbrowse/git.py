@@ -1,5 +1,5 @@
 import os
-
+import itertools
 
 class GitCommit(object):
     """
@@ -61,6 +61,19 @@ class GitFileHistory(object):
     @property
     def current_commit(self):
         return self.commits[self._index]
+
+    def jump(self, sha):
+        """
+        Jump to a specific commit matching a given SHA
+        """
+        commit = itertools.ifilter(lambda x: x.sha == sha, self.commits).next()
+        try:
+            indx = self.commits.index(commit)
+            self._index = indx
+            self._blame = None
+            return True
+        except ValueError:
+            return False
 
     def next(self):
         """
